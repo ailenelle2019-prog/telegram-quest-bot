@@ -771,17 +771,17 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     # Инициализируем примеры предметов
     initialize_sample_items()
-
-    # Создаем приложение
+    
+    # Создаем приложение (новый стиль API)
     application = Application.builder().token(BOT_TOKEN).build()
-
-    # Добавляем обработчики для обычных пользователей
+    
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("rating", show_rating))
     application.add_handler(CommandHandler("my_stats", show_my_stats))
     application.add_handler(CallbackQueryHandler(button_handler))
-
+    
     # Добавляем обработчики для администратора
     application.add_handler(CommandHandler("reset_all", admin_reset_all))
     application.add_handler(CommandHandler("reset_progress", admin_reset_progress))
@@ -789,19 +789,28 @@ def main():
     application.add_handler(CommandHandler("users_list", admin_users_list))
     application.add_handler(CommandHandler("export_users", admin_export_users))
     application.add_handler(CommandHandler("admin_help", admin_help))
-
+    
     # Обработчик текстовых сообщений (QR-коды)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_qr_code))
-
+    
     # Обработчик ошибок
     application.add_error_handler(error_handler)
-
+    
     # Настраиваем меню команд при запуске
     application.post_init = set_bot_commands
-
+    
     # Запускаем бота
-    print("Бот запущен...")
-    application.run_polling()
-
-if __name__ == "__main__":
-    main()
+    print("Бот запущен на Render...")
+    
+    try:
+        # Новый стиль запуска для версий >=20.0
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
+        )
+    except Exception as e:
+        print(f"Ошибка при запуске: {e}")
+        # Перезапуск через 30 секунд
+        import time
+        time.sleep(30)
+        main()
