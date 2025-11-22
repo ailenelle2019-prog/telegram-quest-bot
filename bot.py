@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import csv
 import io
@@ -8,15 +7,13 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import sqlite3
 from datetime import datetime
 
-USE_WEBHOOKS = False
-
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# Токен бота ТОЛЬКО из переменных окружения (удалите из кода!)
+# Токен бота из переменных окружения
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
 # Проверка, что токен установлен
@@ -34,7 +31,7 @@ class QuestDatabase:
         db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quest.db')
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.create_tables()
-
+    
     def create_tables(self):
         cursor = self.conn.cursor()
         # Таблица предметов
@@ -68,7 +65,7 @@ class QuestDatabase:
             )
         ''')
         self.conn.commit()
-
+    
     def add_item(self, item_code, item_name, points, description=""):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -76,7 +73,7 @@ class QuestDatabase:
             VALUES (?, ?, ?, ?)
         ''', (item_code, item_name, points, description))
         self.conn.commit()
-
+    
     def register_participant(self, user_id, username, first_name, last_name):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -84,39 +81,39 @@ class QuestDatabase:
             VALUES (?, ?, ?, ?)
         ''', (user_id, username, first_name, last_name))
         self.conn.commit()
-
+    
     def mark_item_found(self, user_id, item_code):
         cursor = self.conn.cursor()
         # Проверяем, существует ли предмет
         cursor.execute('SELECT * FROM items WHERE item_code = ?', (item_code,))
         item = cursor.fetchone()
-
+        
         if not item:
             return False, "Этот предмет не был заколдован"
-
+        
         # Проверяем, не находил ли уже пользователь этот предмет
         cursor.execute('''
-            SELECT * FROM found_items
+            SELECT * FROM found_items 
             WHERE user_id = ? AND item_code = ?
         ''', (user_id, item_code))
-
+        
         if cursor.fetchone():
             return False, "Ты уже расколдовал это ёлочное украшение. Поищи ещё!"
-
+        
         # Добавляем запись о найденном предмете
         cursor.execute('''
             INSERT INTO found_items (user_id, item_code)
             VALUES (?, ?)
         ''', (user_id, item_code))
         self.conn.commit()
-
+        
         # Получаем имя пользователя для сообщения
         cursor.execute('SELECT first_name FROM participants WHERE user_id = ?', (user_id,))
         user_data = cursor.fetchone()
         user_name = user_data[0] if user_data else "Искатель приключений"
-
+        
         return True, f"🎉 Поздравляем, {user_name}! Ты расколдовал: {item[1]}\n💰 Стоимость: {item[2]} очков"
-
+    
     def get_user_stats(self, user_id):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -127,12 +124,12 @@ class QuestDatabase:
         ''', (user_id,))
         result = cursor.fetchone()
         return result[0] or 0, result[1] or 0
-
+    
     def get_leaderboard(self, limit=10):
         cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT p.user_id, p.first_name, p.username,
-                   COUNT(fi.item_code) as items_found,
+            SELECT p.user_id, p.first_name, p.username, 
+                   COUNT(fi.item_code) as items_found, 
                    SUM(i.points) as total_points
             FROM participants p
             LEFT JOIN found_items fi ON p.user_id = fi.user_id
@@ -142,13 +139,13 @@ class QuestDatabase:
             LIMIT ?
         ''', (limit,))
         return cursor.fetchall()
-
+    
     def get_leaderboard_with_ties(self, limit=100):
         """Получить рейтинг с учетом одинаковых очков (ничьих)"""
         cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT p.user_id, p.first_name, p.username,
-                   COUNT(fi.item_code) as items_found,
+            SELECT p.user_id, p.first_name, p.username, 
+                   COUNT(fi.item_code) as items_found, 
                    SUM(i.points) as total_points
             FROM participants p
             LEFT JOIN found_items fi ON p.user_id = fi.user_id
@@ -158,17 +155,17 @@ class QuestDatabase:
             ORDER BY total_points DESC, items_found DESC, p.registered_at ASC
         ''')
         all_users = cursor.fetchall()
-
+        
         # Группируем пользователей по очкам для определения мест с учетом ничьих
         ranked_users = []
         current_rank = 1
         current_points = None
         current_items = None
         same_rank_count = 0
-
+        
         for user in all_users:
             user_id, first_name, username, items_found, total_points = user
-
+            
             if total_points != current_points or items_found != current_items:
                 # Новый ранг
                 current_rank += same_rank_count
@@ -178,11 +175,11 @@ class QuestDatabase:
             else:
                 # Такие же очки - делим место
                 same_rank_count += 1
-
+            
             ranked_users.append((current_rank, user_id, first_name, username, items_found, total_points))
-
+        
         return ranked_users[:limit] if limit else ranked_users
-
+    
     # Функции для сброса статистики
     def reset_all_statistics(self):
         """Полный сброс всей статистики"""
@@ -191,27 +188,27 @@ class QuestDatabase:
         cursor.execute('DELETE FROM participants')
         self.conn.commit()
         return cursor.rowcount
-
+    
     def reset_only_progress(self):
         """Сброс только прогресса (найденных предметов)"""
         cursor = self.conn.cursor()
         cursor.execute('DELETE FROM found_items')
         self.conn.commit()
         return cursor.rowcount
-
+    
     def reset_user_statistics(self, user_id):
         """Сброс статистики конкретного пользователя"""
         cursor = self.conn.cursor()
         cursor.execute('DELETE FROM found_items WHERE user_id = ?', (user_id,))
         self.conn.commit()
         return cursor.rowcount
-
+    
     def get_all_users(self):
         """Получить список всех пользователей"""
         cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT p.user_id, p.first_name, p.username,
-                   COUNT(fi.item_code) as items_found,
+            SELECT p.user_id, p.first_name, p.username, 
+                   COUNT(fi.item_code) as items_found, 
                    SUM(i.points) as total_points
             FROM participants p
             LEFT JOIN found_items fi ON p.user_id = fi.user_id
@@ -220,12 +217,12 @@ class QuestDatabase:
             ORDER BY total_points DESC
         ''')
         return cursor.fetchall()
-
+    
     def get_all_participants_detailed(self):
         """Получить полный список участников со всей информацией"""
         cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT
+            SELECT 
                 p.user_id,
                 p.username,
                 p.first_name,
@@ -248,7 +245,7 @@ db = QuestDatabase()
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# Добавляем тестовые предметы (замените на свои)
+# Добавляем тестовые предметы (полный список)
 def initialize_sample_items():
     sample_items = [
         ("decoration001", "*Ангелочек*. Отлично, что он снова на своём посту! Без него верхушка ёлки будет занята одиноким и грустным шпилем. Кто же будет шептать добрые вести Северному ветру?", 22),
@@ -339,8 +336,8 @@ def initialize_sample_items():
         ("decoration086", "*Фотоаппарат.* Отлично, что он снова с нами! Без него даже самые уморительные моменты застолья не сохранятся для чёрного дня. Пропадёт вещественное доказательство веселья.", 22),
         ("decoration087", "*Сердечко.* Прекрасно, что оно расколдовано! Новогоднее настроение, лишенное символа любви, стало бы просто предпраздничной суетой.", 22),
         ("decoration088", "*Диско-шар.* Здорово, что он найден! Даже самая яркая электрическая гирлянда без него не сможет устроить настоящую дискотеку. Огоньки будут просто гореть, а не танцевать.", 22)
-         ]
-
+    ]
+    
     for item_code, name, points in sample_items:
         db.add_item(item_code, name, points)
 
@@ -358,15 +355,14 @@ async def set_bot_commands(application: Application):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.register_participant(user.id, user.username, user.first_name, user.last_name)
-
+    
     # Проверяем, передан ли код предмета через ссылку
     if context.args:
         item_code = context.args[0]
         success, message = db.mark_item_found(user.id, item_code)
-
+        
         if success:
             items_found, total_points = db.get_user_stats(user.id)
-            # Убрано приветствие "Приветствуем в квест, ИМЯ!"
             welcome_text = f"""
 🎉 {message}
 
@@ -388,7 +384,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = f"""
 👋 Привет, {user.first_name}!
 
-Добро пожаловать в новогодний квест по поиску елочных украшений!
+Добро пожаловать в новогодний квест по поиску елочных украшений! 
 Ищи QR-коды, в которые Баба Яга и Кощей Бессмертный превратили елочные игрушки, сканируй их своим волшебным смартфоном и верни магию праздника!
 
 📋 Как участвовать:
@@ -402,27 +398,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Удачи в поисках! 🕵️‍♂️
 """
-
+    
     keyboard = [
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="my_stats")],
         [InlineKeyboardButton("🏆 Таблица лидеров", callback_data="rating")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 # Обработка QR-кодов
 async def handle_qr_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     item_code = update.message.text.strip()
-
+    
     success, message = db.mark_item_found(user.id, item_code)
-
+    
     if success:
         items_found, total_points = db.get_user_stats(user.id)
-        # Убрано приветствие, только статистика
         message += f"\n\n📊 Твой прогресс:\n🎯 Найдено предметов: {items_found}\n💰 Всего очков: {total_points}"
-
+        
         # Показываем кнопки после успешного нахождения предмета
         keyboard = [
             [InlineKeyboardButton("📊 Мой прогресс", callback_data="my_stats")],
@@ -436,43 +431,43 @@ async def handle_qr_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Команда /rating
 async def show_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leaderboard = db.get_leaderboard_with_ties(limit=50)  # Показываем до 50 игроков
-
+    
     if not leaderboard:
         await update.message.reply_text("🏆 Таблица лидеров пуста. Будь первым!")
         return
-
+    
     rating_text = "🏆 **ТАБЛИЦА ЛИДЕРОВ** 🏆\n\n"
     rating_text += "*Игроки с одинаковыми очками делят место*\n\n"
-
+    
     for rank, user_id, first_name, username, items_found, total_points in leaderboard:
         if username:
             name = f"@{username}"
         else:
             name = first_name or "Аноним"
-
+        
         # Определяем медали только для уникальных первых трех мест
         medal = ""
-        if rank == 1:
+        if rank == 1: 
             medal = "🥇"
-        elif rank == 2:
+        elif rank == 2: 
             medal = "🥈"
-        elif rank == 3:
+        elif rank == 3: 
             medal = "🥉"
-
+        
         rating_text += f"{medal} {rank}. {name}\n"
         rating_text += f"   🎯 Предметов: {items_found} | 💰 Очков: {total_points}\n\n"
-
+    
     # Добавляем информацию о количестве участников
     all_users = db.get_leaderboard_with_ties(limit=None)
     rating_text += f"📊 Всего участников: {len(all_users)}"
-
+    
     await update.message.reply_text(rating_text)
 
 # Команда /my_stats
 async def show_my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     items_found, total_points = db.get_user_stats(user.id)
-
+    
     # Определяем ранг игрока с учетом ничьих
     leaderboard = db.get_leaderboard_with_ties(limit=None)
     user_rank = None
@@ -480,14 +475,14 @@ async def show_my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id == user.id:
             user_rank = rank
             break
-
+    
     # Считаем сколько игроков имеют такой же ранг (ничья)
     same_rank_count = 0
     if user_rank:
         for rank, user_id, _, _, _, points in leaderboard:
             if rank == user_rank:
                 same_rank_count += 1
-
+    
     stats_text = f"""
 📊 **ТВОЯ СТАТИСТИКА**
 
@@ -497,25 +492,25 @@ async def show_my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🎯 Найдено предметов: {items_found}
 💰 Всего очков: {total_points}
 """
-
+    
     # Добавляем информацию о ничье если есть
     if same_rank_count > 1:
         stats_text += f"\n🎯 Ты делишь {user_rank}-е место с {same_rank_count - 1} другим(ими) игроком(ами)"
-
+    
     stats_text += "\n\nПродолжайте в том же духе! 🚀"
-
+    
     await update.message.reply_text(stats_text)
 
 # Обработка callback кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
+    
     user = query.from_user
-
+    
     if query.data == "my_stats":
         items_found, total_points = db.get_user_stats(user.id)
-
+        
         # Определяем ранг для кнопки
         leaderboard = db.get_leaderboard_with_ties(limit=None)
         user_rank = None
@@ -523,37 +518,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user_id == user.id:
                 user_rank = rank
                 break
-
+        
         stats_text = f"📊 **Ваш прогресс**\n\n🏆 Ранг: {user_rank if user_rank else 'Не в рейтинге'}\n🎯 Предметов: {items_found}\n💰 Очков: {total_points}"
         await query.edit_message_text(stats_text)
-
+    
     elif query.data == "rating":
         await show_rating_for_button(query)
 
 async def show_rating_for_button(query):
     leaderboard = db.get_leaderboard_with_ties(limit=10)  # Только топ-10 для кнопки
-
+    
     rating_text = "🏆 **ТОП-10 ИГРОКОВ** 🏆\n\n"
     rating_text += "*Игроки с одинаковыми очками делят место*\n\n"
-
+    
     for rank, user_id, first_name, username, items_found, total_points in leaderboard:
         if username:
             name = f"@{username}"
         else:
             name = first_name or "Аноним"
-
+        
         medal = ""
         if rank == 1: medal = "🥇"
-        elif rank == 2: medal = "🥈"
+        elif rank == 2: medal = "🥈" 
         elif rank == 3: medal = "🥉"
-
+        
         rating_text += f"{medal} {rank}. {name}\n"
         rating_text += f"   💰 Очков: {total_points}\n\n"
-
+    
     # Информация об общем количестве участников
     all_users_count = len(db.get_leaderboard_with_ties(limit=None))
     rating_text += f"📊 Всего участников: {all_users_count}"
-
+    
     await query.edit_message_text(rating_text)
 
 # Команда /help
@@ -563,7 +558,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📱 **Меню команд (внизу экрана):**
 /start - Начать квест
-/my_stats - Мой прогресс
+/my_stats - Мой прогресс  
 /rating - Таблица лидеров
 /help - Помощь
 
@@ -587,37 +582,37 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полный сброс всей статистики"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     deleted_count = db.reset_all_statistics()
     await update.message.reply_text(f"✅ Вся статистика сброшена! Удалено записей: {deleted_count}")
 
 async def admin_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сброс только прогресса (найденных предметов)"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     deleted_count = db.reset_only_progress()
     await update.message.reply_text(f"✅ Прогресс всех участников сброшен! Удалено записей: {deleted_count}")
 
 async def admin_reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сброс статистики конкретного пользователя"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     if not context.args:
         await update.message.reply_text("❌ Укажите ID пользователя: /reset_user <user_id>")
         return
-
+    
     try:
         target_user_id = int(context.args[0])
         deleted_count = db.reset_user_statistics(target_user_id)
@@ -628,29 +623,29 @@ async def admin_reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Список всех пользователей"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     users = db.get_all_users()
-
+    
     if not users:
         await update.message.reply_text("📝 Нет зарегистрированных пользователей")
         return
-
+    
     users_text = "📋 **СПИСОК УЧАСТНИКОВ**\n\n"
-
+    
     for i, (user_id, first_name, username, items_found, total_points) in enumerate(users, 1):
         if username:
             name = f"@{username}"
         else:
             name = first_name or "Аноним"
-
+        
         users_text += f"{i}. {name}\n"
         users_text += f"   🆔 ID: {user_id}\n"
         users_text += f"   🎯 Предметов: {items_found} | 💰 Очков: {total_points}\n\n"
-
+    
     # Разбиваем сообщение если слишком длинное
     if len(users_text) > 4000:
         part1 = users_text[:4000]
@@ -663,43 +658,43 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_export_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт полного списка участников в CSV файл"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     try:
         # Получаем полный список участников
         participants = db.get_all_participants_detailed()
-
+        
         if not participants:
             await update.message.reply_text("📝 Нет зарегистрированных пользователей для экспорта")
             return
-
+        
         # Создаем CSV файл в памяти
         output = io.StringIO()
         writer = csv.writer(output)
-
+        
         # Заголовки CSV
         writer.writerow([
             'ID пользователя',
-            'Username',
+            'Username', 
             'Имя',
             'Фамилия',
             'Дата регистрации',
             'Найдено предметов',
             'Всего очков'
         ])
-
+        
         # Данные
         for participant in participants:
             user_id, username, first_name, last_name, registered_at, items_found, total_points = participant
-
+            
             # Заменяем None на пустые строки
             username = username or ''
             first_name = first_name or ''
             last_name = last_name or ''
-
+            
             writer.writerow([
                 user_id,
                 username,
@@ -709,25 +704,25 @@ async def admin_export_users(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 items_found,
                 total_points
             ])
-
+        
         # Перемещаем указатель в начало файла
         output.seek(0)
-
+        
         # Создаем временный файл
         csv_data = output.getvalue().encode('utf-8')
         csv_file = io.BytesIO(csv_data)
         csv_file.name = f'participants_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-
+        
         # Отправляем файл
         await update.message.reply_document(
             document=csv_file,
             caption=f"📊 Полный список участников\n👥 Всего участников: {len(participants)}\n📅 Дата выгрузки: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
-
+        
         # Закрываем файлы
         output.close()
         csv_file.close()
-
+        
     except Exception as e:
         logging.error(f"Ошибка при экспорте пользователей: {e}")
         await update.message.reply_text("❌ Произошла ошибка при экспорте данных")
@@ -735,11 +730,11 @@ async def admin_export_users(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Помощь по командам администратора"""
     user = update.effective_user
-
+    
     if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
         return
-
+    
     help_text = """
 🛠 **КОМАНДЫ АДМИНИСТРАТОРА**
 
@@ -755,7 +750,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - ID пользователя
 - Username (@ник)
 - Имя
-- Фамилия
+- Фамилия  
 - Дата регистрации
 - Количество найденных предметов
 - Всего очков
@@ -772,10 +767,10 @@ def main():
     # Инициализируем примеры предметов
     initialize_sample_items()
     
-    # Создаем приложение (новый стиль API)
+    # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Добавляем обработчики
+    # Добавляем обработчики для обычных пользователей
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("rating", show_rating))
@@ -800,17 +795,8 @@ def main():
     application.post_init = set_bot_commands
     
     # Запускаем бота
-    print("Бот запущен на Render...")
-    
-    try:
-        # Новый стиль запуска для версий >=20.0
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES
-        )
-    except Exception as e:
-        print(f"Ошибка при запуске: {e}")
-        # Перезапуск через 30 секунд
-        import time
-        time.sleep(30)
-        main()
+    print("🤖 Бот запущен со всеми функциями...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
