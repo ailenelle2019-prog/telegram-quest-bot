@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: telegram-quest-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 8026142484:AAGTw_8z1LtfhYJa8oivB9hRVtTudGIv4EQ
